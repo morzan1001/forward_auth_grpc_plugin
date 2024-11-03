@@ -4,6 +4,10 @@
 
 The GRPC Forward Auth Plugin for Traefik allows validating incoming requests against a gRPC authentication service. It forwards authentication requests to the gRPC authentication service and checks the response to decide whether to allow or deny the request.
 
+### Why i created this plugin
+
+I had the problem that my entire backend speaks grpc. all services of a microservice infrastructure communicate with each other via grpc. But I wanted to use traefik to check authentication. Otherwise I would have had to write logic for this in every service. Traefik already offers a [forwardAuth](https://doc.traefik.io/traefik/middlewares/http/forwardauth/) for http backends. In fact, my first setup was to use this forward auth and then the plugin [http2grcp](https://github.com/v-electrolux/http2grpc), but the constant translation in protocols was a bit unpleasant :D
+
 ## Installation
 
 To install the plugin, add the following configuration to your Traefik configuration file:

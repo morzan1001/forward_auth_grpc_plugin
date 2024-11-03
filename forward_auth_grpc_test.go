@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"testing"
-	"time"
 
 	pb "github.com/morzan1001/forward-auth-grpc-plugin/proto"
 	"github.com/stretchr/testify/assert"
@@ -58,19 +57,9 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 	if config.UseTLS {
 		var creds credentials.TransportCredentials
 
-		if config.ServiceCertPath != "" && config.ServiceKeyPath != "" {
-			// Load server certificate and key
-			cert, err := tls.LoadX509KeyPair(config.ServiceCertPath, config.ServiceKeyPath)
-			require.NoError(t, err)
-
-			// Create TLS credentials with server certificate
-			tlsConfig := &tls.Config{
-				Certificates: []tls.Certificate{cert},
-			}
-			creds = credentials.NewTLS(tlsConfig)
-		} else if config.CACertPath != "" {
+		if config.CACertPath != "" {
 			// If only one CA certificate is provided, we use a self-signed certificate
-			cert, err := tls.LoadX509KeyPair(".assets/dummy-server.crt", ".assets/dummy-server.key")
+			cert, err := tls.LoadX509KeyPair("certs/dummy-server.crt", "certs/dummy-server.key")
 			require.NoError(t, err)
 
 			caCert, err := os.ReadFile(config.CACertPath)
@@ -166,7 +155,7 @@ func TestGRPCForwardAuth_WithCACert(t *testing.T) {
 		Address:     "localhost:50052",
 		TokenHeader: "authorization",
 		UseTLS:      true,
-		CACertPath:  ".assets/dummy-ca.crt",
+		CACertPath:  "certs/dummy-ca.crt",
 	}
 
 	auth, cleanup := setupTestWithConfig(t, mock, config)
@@ -191,11 +180,10 @@ func TestGRPCForwardAuth_WithServiceCert(t *testing.T) {
 	}
 
 	config := &Config{
-		Address:         "localhost:50053",
-		TokenHeader:     "authorization",
-		UseTLS:          true,
-		ServiceCertPath: ".assets/dummy-server.crt",
-		ServiceKeyPath:  ".assets/dummy-server.key",
+		Address:     "localhost:50053",
+		TokenHeader: "authorization",
+		UseTLS:      true,
+		CACertPath:  "certs/dummy-server.crt",
 	}
 
 	auth, cleanup := setupTestWithConfig(t, mock, config)
@@ -302,15 +290,18 @@ func TestGRPCForwardAuth_MissingToken(t *testing.T) {
 }
 
 func TestGRPCForwardAuth_AuthServiceDown(t *testing.T) {
-	// Context with short timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 
 	config := &Config{
 		Address:     "invalid-address:50057",
 		TokenHeader: "authorization",
 		UseTLS:      false,
 	}
+
+	// Create context with token
+	md := metadata.New(map[string]string{
+		"authorization": "Bearer token",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
 
 	auth, err := New(ctx, config, "test")
 	if err == nil {

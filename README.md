@@ -34,8 +34,6 @@ http:
           tokenHeader: "authorization"
           useTLS: false
           caCertPath: "" 
-          serviceCertPath: ""
-          serviceKeyPath: ""
 ```
 
 ### Parameters
@@ -44,8 +42,6 @@ http:
 - `tokenHeader`: The name of the header that contains the authentication token.
 - `useTLS`: Setting whether the authentication service should be called using tls
 - `caCertPath`: If an internal CA is used, the certificate can be specified here.
-- `serviceCertPath`: If a self-signed certificate is used, the server certificate can be specified here.
-- `serviceKeyPath`: If a self-signed certificate is used, the server key can be entered here.
 
 #### TLS
 

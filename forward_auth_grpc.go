@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"net"
 	"os"
-	"time"
 
 	pb "github.com/morzan1001/forward-auth-grpc-plugin/proto"
 
@@ -42,10 +41,6 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 		return nil, status.Error(codes.InvalidArgument, "auth service address cannot be empty")
 	}
 
-	// Timeout for the initial connection
-	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
 	// Setup connection options
 	var opts []grpc.DialOption
 
@@ -77,33 +72,22 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 			RootCAs: caCertPool,
 		}
 
-		if config.ServiceCertPath != "" {
-			// Load the certificate of the external service
-			cert, err := tls.LoadX509KeyPair(config.ServiceCertPath, config.ServiceKeyPath)
-			if err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to load service certificate: %v", err)
-			}
-			tlsConfig.Certificates = []tls.Certificate{cert}
-		}
-
 		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
-	opts = append(opts, grpc.WithBlock())
-
 	// If a test dialer is present, use it
 	if dialer, ok := ctx.Value("dialer").(func(context.Context, string) (net.Conn, error)); ok {
 		opts = append(opts, grpc.WithContextDialer(dialer))
 	}
 
-	conn, err := grpc.DialContext(
-		dialCtx,
+	conn, err := grpc.NewClient(
 		config.Address,
 		opts...,
 	)
+
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "failed to connect to auth service: %v", err)
 	}

@@ -9,9 +9,6 @@ The GRPC Forward Auth Plugin for Traefik allows validating incoming requests aga
 To install the plugin, add the following configuration to your Traefik configuration file:
 
 ```yaml
-pilot:
-  token: "your_pilot_token"
-
 experimental:
   plugins:
     grpcForwardAuth:
@@ -44,7 +41,7 @@ The gRPC authentication service must implement the following endpoints to be com
 
 #### proto/auth.proto
 
-```
+```proto3
 syntax = "proto3";
 
 package auth;
@@ -123,7 +120,7 @@ To test the plugin, you can use the provided unit tests. Run the tests with the 
 go test ./...
 ```
 
-or 
+or
 
 ```bash
 make test

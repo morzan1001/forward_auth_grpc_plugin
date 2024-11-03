@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"io/ioutil"
 	"net"
+	"os"
 	"time"
 
 	pb "github.com/morzan1001/forward-auth-grpc-plugin/proto"
@@ -53,7 +53,7 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 		var caCertPool *x509.CertPool
 		if config.CACertPath != "" {
 			// Load the CA certificates
-			caCert, err := ioutil.ReadFile(config.CACertPath)
+			caCert, err := os.ReadFile(config.CACertPath)
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to read CA certificate: %v", err)
 			}
@@ -105,7 +105,7 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 		opts...,
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to connect to auth service: %v", err)
+		return nil, status.Errorf(codes.Unavailable, "failed to connect to auth service: %v", err)
 	}
 
 	client := pb.NewAuthServiceClient(conn)

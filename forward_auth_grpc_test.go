@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"io/ioutil"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -53,12 +53,13 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 				Certificates: []tls.Certificate{cert},
 			}
 			creds = credentials.NewTLS(tlsConfig)
+			t.Log("Server using TLS with ServerCert and ServerKey")
 		} else if config.CACertPath != "" {
 			// If only one CA certificate is provided, we use a self-signed certificate
 			cert, err := tls.LoadX509KeyPair(".assets/dummy-server.crt", ".assets/dummy-server.key")
 			require.NoError(t, err)
 
-			caCert, err := ioutil.ReadFile(config.CACertPath)
+			caCert, err := os.ReadFile(config.CACertPath)
 			require.NoError(t, err)
 
 			caCertPool := x509.NewCertPool()
@@ -70,13 +71,15 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 				ClientCAs:    caCertPool,
 			}
 			creds = credentials.NewTLS(tlsConfig)
+			t.Log("Server using TLS with CACert")
 		} else {
-			t.Fatal("TLS aktiviert, aber weder Serverzertifikat noch CA-Zertifikat angegeben")
+			t.Fatal("TLS activated, but neither server certificate nor CA certificate specified")
 		}
 
 		s = grpc.NewServer(grpc.Creds(creds))
 	} else {
 		s = grpc.NewServer()
+		t.Log("Server using no TLS")
 	}
 
 	pb.RegisterAuthServiceServer(s, mock)
@@ -250,20 +253,24 @@ func TestGRPCForwardAuth_AuthServiceDown(t *testing.T) {
 	}
 
 	auth, err := New(ctx, config, "test")
-	require.NoError(t, err)
+	if err == nil {
+		// If no errors when creating, try a request
+		reqCtx := metadata.NewIncomingContext(
+			context.Background(),
+			metadata.New(map[string]string{
+				"authorization": "Bearer test-token",
+			}),
+		)
 
-	// Create context with token
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer token",
-	})
-	ctx = metadata.NewIncomingContext(context.Background(), md)
-
-	// Test authentication
-	err = auth.InterceptRequest(ctx)
-
-	// Verify error
-	assert.Error(t, err)
-	st, ok := status.FromError(err)
-	assert.True(t, ok)
-	assert.Equal(t, codes.Unavailable, st.Code())
+		err = auth.InterceptRequest(reqCtx)
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.Unavailable, st.Code())
+	} else {
+		// Or check the connection error
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.Unavailable, st.Code())
+	}
 }

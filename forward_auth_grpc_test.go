@@ -19,17 +19,32 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// MockServerTransportStream implements grpc.ServerTransportStream for tests
+type MockServerTransportStream struct {
+	headersSent metadata.MD
+}
+
+func (m *MockServerTransportStream) Method() string                 { return "" }
+func (m *MockServerTransportStream) SetHeader(md metadata.MD) error { return nil }
+func (m *MockServerTransportStream) SendHeader(md metadata.MD) error {
+	m.headersSent = md
+	return nil
+}
+func (m *MockServerTransportStream) SetTrailer(md metadata.MD) error { return nil }
+
 // MockAuthService is a mock for the external service
 type MockAuthService struct {
 	pb.UnimplementedAuthServiceServer
 	allowAuth bool
+	metadata  map[string]string
 }
 
 // Authenticate is the mock implementation of the Authenticate method
 func (m *MockAuthService) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
 	return &pb.AuthResponse{
-		Allowed: m.allowAuth,
-		Message: "mock response",
+		Allowed:  m.allowAuth,
+		Message:  "mock response",
+		Metadata: m.metadata,
 	}, nil
 }
 
@@ -53,7 +68,6 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 				Certificates: []tls.Certificate{cert},
 			}
 			creds = credentials.NewTLS(tlsConfig)
-			t.Log("Server using TLS with ServerCert and ServerKey")
 		} else if config.CACertPath != "" {
 			// If only one CA certificate is provided, we use a self-signed certificate
 			cert, err := tls.LoadX509KeyPair(".assets/dummy-server.crt", ".assets/dummy-server.key")
@@ -71,7 +85,6 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 				ClientCAs:    caCertPool,
 			}
 			creds = credentials.NewTLS(tlsConfig)
-			t.Log("Server using TLS with CACert")
 		} else {
 			t.Fatal("TLS activated, but neither server certificate nor CA certificate specified")
 		}
@@ -79,7 +92,6 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 		s = grpc.NewServer(grpc.Creds(creds))
 	} else {
 		s = grpc.NewServer()
-		t.Log("Server using no TLS")
 	}
 
 	pb.RegisterAuthServiceServer(s, mock)
@@ -101,13 +113,57 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 	return auth, cleanup
 }
 
+func TestGRPCForwardAuth_WithMetadata(t *testing.T) {
+	expectedMetadata := map[string]string{
+		"user-id": "123",
+		"role":    "admin",
+	}
+
+	mock := &MockAuthService{
+		allowAuth: true,
+		metadata:  expectedMetadata,
+	}
+
+	config := &Config{
+		Address:     "localhost:50051",
+		TokenHeader: "authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	// Create stream mock
+	stream := &MockServerTransportStream{}
+
+	// Context with stream and token
+	ctx := grpc.NewContextWithServerTransportStream(
+		metadata.NewIncomingContext(
+			context.Background(),
+			metadata.New(map[string]string{
+				"authorization": "Bearer valid-token",
+			}),
+		),
+		stream,
+	)
+
+	// Execute request
+	err := auth.InterceptRequest(ctx)
+	require.NoError(t, err)
+
+	// Check whether metadata has been passed on correctly
+	require.NotNil(t, stream.headersSent)
+	assert.Equal(t, expectedMetadata["user-id"], stream.headersSent.Get("user-id")[0])
+	assert.Equal(t, expectedMetadata["role"], stream.headersSent.Get("role")[0])
+}
+
 func TestGRPCForwardAuth_WithCACert(t *testing.T) {
 	mock := &MockAuthService{
 		allowAuth: true,
 	}
 
 	config := &Config{
-		Address:     "localhost:50051",
+		Address:     "localhost:50052",
 		TokenHeader: "authorization",
 		UseTLS:      true,
 		CACertPath:  ".assets/dummy-ca.crt",
@@ -135,7 +191,7 @@ func TestGRPCForwardAuth_WithServiceCert(t *testing.T) {
 	}
 
 	config := &Config{
-		Address:         "localhost:50052",
+		Address:         "localhost:50053",
 		TokenHeader:     "authorization",
 		UseTLS:          true,
 		ServiceCertPath: ".assets/dummy-server.crt",
@@ -158,31 +214,35 @@ func TestGRPCForwardAuth_WithServiceCert(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestGRPCForwardAuth_WithSystemCACerts(t *testing.T) {
+func TestGRPCForwardAuth_InvalidToken(t *testing.T) {
 	mock := &MockAuthService{
-		allowAuth: true,
+		allowAuth: false, // Set to false to simulate authentication failure
 	}
 
 	config := &Config{
-		Address:     "localhost:50053",
+		Address:     "localhost:50054",
 		TokenHeader: "authorization",
-		UseTLS:      true,
+		UseTLS:      false,
 	}
 
 	auth, cleanup := setupTestWithConfig(t, mock, config)
 	defer cleanup()
 
-	// Create context with token
+	// Create context with invalid token
 	md := metadata.New(map[string]string{
-		"authorization": "Bearer token",
+		"authorization": "Bearer invalid-token",
 	})
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 
 	// Test authentication
 	err := auth.InterceptRequest(ctx)
 
-	// Verify no error
-	assert.NoError(t, err)
+	// Verify error
+	assert.Error(t, err)
+	st, ok := status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, codes.PermissionDenied, st.Code())
+	assert.Contains(t, st.Message(), "mock response")
 }
 
 func TestGRPCForwardAuth_NoTLS(t *testing.T) {
@@ -191,7 +251,7 @@ func TestGRPCForwardAuth_NoTLS(t *testing.T) {
 	}
 
 	config := &Config{
-		Address:     "localhost:50054",
+		Address:     "localhost:50055",
 		TokenHeader: "authorization",
 		UseTLS:      false,
 	}
@@ -218,7 +278,7 @@ func TestGRPCForwardAuth_MissingToken(t *testing.T) {
 	}
 
 	config := &Config{
-		Address:     "localhost:50055",
+		Address:     "localhost:50056",
 		TokenHeader: "authorization",
 		UseTLS:      false,
 	}
@@ -247,7 +307,7 @@ func TestGRPCForwardAuth_AuthServiceDown(t *testing.T) {
 	defer cancel()
 
 	config := &Config{
-		Address:     "invalid-address:50056",
+		Address:     "invalid-address:50057",
 		TokenHeader: "authorization",
 		UseTLS:      false,
 	}

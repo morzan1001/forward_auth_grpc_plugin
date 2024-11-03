@@ -11,5 +11,3 @@ testData:
   TokenHeader: "authorization"
   UseTLS: false
   CACertPath: "" 
-  ServiceCertPath: ""
-  ServiceKeyPath: ""

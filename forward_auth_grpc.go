@@ -19,12 +19,10 @@ import (
 
 // Config holds the configuration for the GRPCForwardAuth plugin.
 type Config struct {
-	Address         string
-	TokenHeader     string
-	UseTLS          bool
-	CACertPath      string
-	ServiceCertPath string
-	ServiceKeyPath  string
+	Address     string
+	TokenHeader string
+	UseTLS      bool
+	CACertPath  string
 }
 
 // GRPCForwardAuth plugin.

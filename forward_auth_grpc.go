@@ -1,7 +1,10 @@
-package forward_auth_grpc_plugin
+package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
 	"net"
 	"time"
 
@@ -9,23 +12,20 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
-// Config the plugin configuration.
+// Config holds the configuration for the GRPCForwardAuth plugin.
 type Config struct {
-	Address     string `json:"address,omitempty"`     // Auth service address
-	TokenHeader string `json:"tokenHeader,omitempty"` // Name of the token metadata field
-}
-
-// CreateConfig creates the default plugin configuration.
-func CreateConfig() *Config {
-	return &Config{
-		TokenHeader: "authorization", // Default token header name
-	}
+	Address         string
+	TokenHeader     string
+	UseTLS          bool
+	CACertPath      string
+	ServiceCertPath string
+	ServiceKeyPath  string
 }
 
 // GRPCForwardAuth plugin.
@@ -42,15 +42,57 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 		return nil, status.Error(codes.InvalidArgument, "auth service address cannot be empty")
 	}
 
-	// Timeout für die initiale Verbindung
+	// Timeout for the initial connection
 	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
 	// Setup connection options
-	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
+	var opts []grpc.DialOption
+
+	if config.UseTLS {
+		var caCertPool *x509.CertPool
+		if config.CACertPath != "" {
+			// Load the CA certificates
+			caCert, err := ioutil.ReadFile(config.CACertPath)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to read CA certificate: %v", err)
+			}
+
+			// Create a CertPool and add the CA certificates
+			caCertPool = x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return nil, status.Errorf(codes.Internal, "failed to append CA certificate")
+			}
+		} else {
+			// Use the system CA certificates
+			var err error
+			caCertPool, err = x509.SystemCertPool()
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to load system CA certificates: %v", err)
+			}
+		}
+
+		// Create the TLS credentials
+		tlsConfig := &tls.Config{
+			RootCAs: caCertPool,
+		}
+
+		if config.ServiceCertPath != "" {
+			// Load the certificate of the external service
+			cert, err := tls.LoadX509KeyPair(config.ServiceCertPath, config.ServiceKeyPath)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to load service certificate: %v", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
+
+	opts = append(opts, grpc.WithBlock())
 
 	// If a test dialer is present, use it
 	if dialer, ok := ctx.Value("dialer").(func(context.Context, string) (net.Conn, error)); ok {
@@ -63,14 +105,7 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 		opts...,
 	)
 	if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "failed to connect to auth service: %v", err)
-	}
-
-	// Prüfe den Verbindungsstatus
-	state := conn.GetState()
-	if state != connectivity.Ready {
-		conn.Close()
-		return nil, status.Error(codes.Unavailable, "failed to establish connection to auth service")
+		return nil, status.Errorf(codes.Internal, "failed to connect to auth service: %v", err)
 	}
 
 	client := pb.NewAuthServiceClient(conn)

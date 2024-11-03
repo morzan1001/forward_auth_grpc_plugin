@@ -6,7 +6,7 @@ The GRPC Forward Auth Plugin for Traefik allows validating incoming requests aga
 
 ### Why i created this plugin
 
-I had the problem that my entire backend speaks grpc. all services of a microservice infrastructure communicate with each other via grpc. But I wanted to use traefik to check authentication. Otherwise I would have had to write logic for this in every service. Traefik already offers a [forwardAuth](https://doc.traefik.io/traefik/middlewares/http/forwardauth/) for http backends. In fact, my first setup was to use this forward auth and then the plugin [http2grcp](https://github.com/v-electrolux/http2grpc), but the constant translation in protocols was a bit unpleasant :D
+I had the problem that my entire backend speaks grpc. all services of a microservice infrastructure communicate with each other via grpc. But I wanted to use traefik to check authentication. Otherwise I would have had to write logic for this in every service. Traefik already offers a [forwardAuth](https://doc.traefik.io/traefik/middlewares/http/forwardauth/) for http backends. In fact, my first setup was to use this forward auth and then the plugin [http2grcp](https://github.com/v-electrolux/http2grpc), but the constant translation in protocols was a bit unpleasant :smile:
 
 ## Installation
 
@@ -56,7 +56,7 @@ The gRPC authentication service must implement the following endpoints to be com
 ```proto3
 syntax = "proto3";
 
-package auth;
+package proto;
 
 option go_package = "github.com/morzan1001/forward-auth-grpc-plugin/proto";
 

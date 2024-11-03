@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	pb "github.com/morzan1001/forward-auth-grpc-plugin/proto"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"

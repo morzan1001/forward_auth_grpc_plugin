@@ -9,3 +9,7 @@ summary: 'GRPC Forward Authentication middleware that validates requests against
 testData:
   Address: "localhost:50051"
   TokenHeader: "authorization"
+  UseTLS: false
+  CACertPath: "" 
+  ServiceCertPath: ""
+  ServiceKeyPath: ""

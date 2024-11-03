@@ -1,4 +1,4 @@
-# GRPC Forward Auth Plugin
+# gRPC Forward Auth Plugin
 
 ## Overview
 
@@ -17,7 +17,7 @@ experimental:
   plugins:
     grpcForwardAuth:
       moduleName: "github.com/morzan1001/forward-auth-grpc-plugin"
-      version: "v0.1.0"
+      version: "v1.0.1"
 ```
 
 ## Configuration
@@ -32,12 +32,20 @@ http:
         grpcForwardAuth:
           address: "localhost:50051"
           tokenHeader: "authorization"
+          useTLS: false
+          caCertPath: "" 
 ```
 
 ### Parameters
 
 - `address`: The address of the gRPC authentication service.
 - `tokenHeader`: The name of the header that contains the authentication token.
+- `useTLS`: Setting whether the authentication service should be called using tls
+- `caCertPath`: If an internal CA is used, the certificate can be specified here.
+
+#### TLS
+
+The plugin can communicate with unencrypted (h2c) grpc services as well as with services via TLS. If no extra CA or server certificate is specified, the CAs stored in the system are used.
 
 ### Exampe gRPC Auth Service configuration
 

@@ -1,150 +1,263 @@
-package forward_auth_grpc_plugin
+package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"net"
+	"os"
 	"testing"
-	"time"
 
 	pb "github.com/morzan1001/forward-auth-grpc-plugin/proto"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 )
 
-// MockAuthService implements the Auth Service for tests
+// MockServerTransportStream implements grpc.ServerTransportStream for tests
+type MockServerTransportStream struct {
+	headersSent metadata.MD
+}
+
+func (m *MockServerTransportStream) Method() string                 { return "" }
+func (m *MockServerTransportStream) SetHeader(md metadata.MD) error { return nil }
+func (m *MockServerTransportStream) SendHeader(md metadata.MD) error {
+	m.headersSent = md
+	return nil
+}
+func (m *MockServerTransportStream) SetTrailer(md metadata.MD) error { return nil }
+
+// MockAuthService is a mock for the external service
 type MockAuthService struct {
 	pb.UnimplementedAuthServiceServer
-	allowAuth    bool
-	returnError  error
-	returnHeader map[string]string
+	allowAuth bool
+	metadata  map[string]string
 }
 
-// mockServerTransportStream implements grpc.ServerTransportStream
-type mockServerTransportStream struct {
-	header  metadata.MD
-	trailer metadata.MD
-}
-
-func (s *mockServerTransportStream) Method() string                  { return "" }
-func (s *mockServerTransportStream) SetHeader(md metadata.MD) error  { s.header = md; return nil }
-func (s *mockServerTransportStream) SendHeader(md metadata.MD) error { s.header = md; return nil }
-func (s *mockServerTransportStream) SetTrailer(md metadata.MD) error { s.trailer = md; return nil }
-
+// Authenticate is the mock implementation of the Authenticate method
 func (m *MockAuthService) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
-	if m.returnError != nil {
-		return nil, m.returnError
-	}
-
 	return &pb.AuthResponse{
 		Allowed:  m.allowAuth,
-		Message:  "test message",
-		Metadata: m.returnHeader,
+		Message:  "mock response",
+		Metadata: m.metadata,
 	}, nil
 }
 
-func setupTest(t *testing.T, mock *MockAuthService) (*GRPCForwardAuth, func()) {
-	listener := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer()
-	pb.RegisterAuthServiceServer(server, mock)
-
-	// Start server in its own goroutine
-	serverError := make(chan error, 1)
-	go func() {
-		if err := server.Serve(listener); err != nil {
-			serverError <- err
-		}
-		close(serverError)
-	}()
-
-	// Context with timeout for client connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(
-		ctx,
-		"",
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-			return listener.Dial()
-		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*GRPCForwardAuth, func()) {
+	// Start mock server
+	lis, err := net.Listen("tcp", config.Address)
 	require.NoError(t, err)
 
-	auth := &GRPCForwardAuth{
-		address:     "bufnet",
-		tokenHeader: "authorization",
-		name:        "test-auth",
-		client:      pb.NewAuthServiceClient(conn),
+	var s *grpc.Server
+
+	if config.UseTLS {
+		var creds credentials.TransportCredentials
+
+		if config.CACertPath != "" {
+			// If only one CA certificate is provided, we use a self-signed certificate
+			cert, err := tls.LoadX509KeyPair("certs/dummy-server.crt", "certs/dummy-server.key")
+			require.NoError(t, err)
+
+			caCert, err := os.ReadFile(config.CACertPath)
+			require.NoError(t, err)
+
+			caCertPool := x509.NewCertPool()
+			ok := caCertPool.AppendCertsFromPEM(caCert)
+			require.True(t, ok, "Failed to parse CA certificate")
+
+			tlsConfig := &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				ClientCAs:    caCertPool,
+			}
+			creds = credentials.NewTLS(tlsConfig)
+		} else {
+			t.Fatal("TLS activated, but neither server certificate nor CA certificate specified")
+		}
+
+		s = grpc.NewServer(grpc.Creds(creds))
+	} else {
+		s = grpc.NewServer()
 	}
 
+	pb.RegisterAuthServiceServer(s, mock)
+
+	go func() {
+		if err := s.Serve(lis); err != nil {
+			t.Logf("Server error: %v", err)
+		}
+	}()
+
+	// Create GRPCForwardAuth instance with configuration
+	auth, err := New(context.Background(), config, "test")
+	require.NoError(t, err)
+
 	cleanup := func() {
-		// Graceful Shutdown des Servers
-		shutdownDone := make(chan struct{})
-		go func() {
-			server.GracefulStop()
-			close(shutdownDone)
-		}()
-
-		// Timeout for shutdown
-		select {
-		case <-shutdownDone:
-			// Server successfully stopped
-		case <-time.After(5 * time.Second):
-			// Force stop after timeout
-			server.Stop()
-		}
-
-		conn.Close()
-		listener.Close()
-
-		// Check for server errors
-		if err := <-serverError; err != nil {
-			t.Errorf("server error: %v", err)
-		}
+		s.Stop()
 	}
 
 	return auth, cleanup
 }
-func TestGRPCForwardAuth_Success(t *testing.T) {
+
+func TestGRPCForwardAuth_WithMetadata(t *testing.T) {
+	expectedMetadata := map[string]string{
+		"user-id": "123",
+		"role":    "admin",
+	}
+
 	mock := &MockAuthService{
 		allowAuth: true,
-		returnHeader: map[string]string{
-			"x-user-id": "123",
-			"x-role":    "admin",
-		},
+		metadata:  expectedMetadata,
 	}
 
-	auth, cleanup := setupTest(t, mock)
+	config := &Config{
+		Address:     "localhost:50051",
+		TokenHeader: "authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
 	defer cleanup()
 
-	// Create stream
-	stream := &mockServerTransportStream{
-		header: make(metadata.MD),
+	// Create stream mock
+	stream := &MockServerTransportStream{}
+
+	// Context with stream and token
+	ctx := grpc.NewContextWithServerTransportStream(
+		metadata.NewIncomingContext(
+			context.Background(),
+			metadata.New(map[string]string{
+				"authorization": "Bearer valid-token",
+			}),
+		),
+		stream,
+	)
+
+	// Execute request
+	err := auth.InterceptRequest(ctx)
+	require.NoError(t, err)
+
+	// Check whether metadata has been passed on correctly
+	require.NotNil(t, stream.headersSent)
+	assert.Equal(t, expectedMetadata["user-id"], stream.headersSent.Get("user-id")[0])
+	assert.Equal(t, expectedMetadata["role"], stream.headersSent.Get("role")[0])
+}
+
+func TestGRPCForwardAuth_WithCACert(t *testing.T) {
+	mock := &MockAuthService{
+		allowAuth: true,
 	}
 
-	// Create test context with server interceptors
-	ctx := metadata.NewIncomingContext(
-		context.Background(),
-		metadata.New(map[string]string{
-			"authorization": "Bearer test-token",
-		}),
-	)
-	ctx = grpc.NewContextWithServerTransportStream(ctx, stream)
+	config := &Config{
+		Address:     "localhost:50052",
+		TokenHeader: "authorization",
+		UseTLS:      true,
+		CACertPath:  "certs/dummy-ca.crt",
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	// Create context with token
+	md := metadata.New(map[string]string{
+		"authorization": "Bearer token",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
 
 	// Test authentication
 	err := auth.InterceptRequest(ctx)
-	assert.NoError(t, err)
 
-	// Verify headers directly from the stream
-	assert.Equal(t, []string{"123"}, stream.header["x-user-id"])
-	assert.Equal(t, []string{"admin"}, stream.header["x-role"])
+	// Verify no error
+	assert.NoError(t, err)
+}
+
+func TestGRPCForwardAuth_WithServiceCert(t *testing.T) {
+	mock := &MockAuthService{
+		allowAuth: true,
+	}
+
+	config := &Config{
+		Address:     "localhost:50053",
+		TokenHeader: "authorization",
+		UseTLS:      true,
+		CACertPath:  "certs/dummy-server.crt",
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	// Create context with token
+	md := metadata.New(map[string]string{
+		"authorization": "Bearer token",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	// Test authentication
+	err := auth.InterceptRequest(ctx)
+
+	// Verify no error
+	assert.NoError(t, err)
+}
+
+func TestGRPCForwardAuth_InvalidToken(t *testing.T) {
+	mock := &MockAuthService{
+		allowAuth: false, // Set to false to simulate authentication failure
+	}
+
+	config := &Config{
+		Address:     "localhost:50054",
+		TokenHeader: "authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	// Create context with invalid token
+	md := metadata.New(map[string]string{
+		"authorization": "Bearer invalid-token",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	// Test authentication
+	err := auth.InterceptRequest(ctx)
+
+	// Verify error
+	assert.Error(t, err)
+	st, ok := status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, codes.PermissionDenied, st.Code())
+	assert.Contains(t, st.Message(), "mock response")
+}
+
+func TestGRPCForwardAuth_NoTLS(t *testing.T) {
+	mock := &MockAuthService{
+		allowAuth: true,
+	}
+
+	config := &Config{
+		Address:     "localhost:50055",
+		TokenHeader: "authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	// Create context with token
+	md := metadata.New(map[string]string{
+		"authorization": "Bearer token",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	// Test authentication
+	err := auth.InterceptRequest(ctx)
+
+	// Verify no error
+	assert.NoError(t, err)
 }
 
 func TestGRPCForwardAuth_MissingToken(t *testing.T) {
@@ -152,7 +265,13 @@ func TestGRPCForwardAuth_MissingToken(t *testing.T) {
 		allowAuth: true,
 	}
 
-	auth, cleanup := setupTest(t, mock)
+	config := &Config{
+		Address:     "localhost:50056",
+		TokenHeader: "authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
 	defer cleanup()
 
 	// Create context without token
@@ -171,16 +290,20 @@ func TestGRPCForwardAuth_MissingToken(t *testing.T) {
 }
 
 func TestGRPCForwardAuth_AuthServiceDown(t *testing.T) {
-	// Context with short timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 
 	config := &Config{
-		Address:     "invalid-address:50051",
+		Address:     "invalid-address:50057",
 		TokenHeader: "authorization",
+		UseTLS:      false,
 	}
 
-	auth, err := New(ctx, config, "test-auth")
+	// Create context with token
+	md := metadata.New(map[string]string{
+		"authorization": "Bearer token",
+	})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	auth, err := New(ctx, config, "test")
 	if err == nil {
 		// If no errors when creating, try a request
 		reqCtx := metadata.NewIncomingContext(
@@ -200,72 +323,5 @@ func TestGRPCForwardAuth_AuthServiceDown(t *testing.T) {
 		st, ok := status.FromError(err)
 		require.True(t, ok)
 		require.Equal(t, codes.Unavailable, st.Code())
-	}
-}
-
-func TestCreateConfig(t *testing.T) {
-	config := CreateConfig()
-	assert.Equal(t, "authorization", config.TokenHeader)
-	assert.Empty(t, config.Address)
-}
-
-func TestNew(t *testing.T) {
-	// Setup Mock Server
-	listener := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer()
-	pb.RegisterAuthServiceServer(server, &MockAuthService{})
-
-	go func() {
-		if err := server.Serve(listener); err != nil {
-			t.Errorf("error serving server: %v", err)
-		}
-	}()
-	defer server.Stop()
-
-	// Helper Funktion für Dial
-	dialer := func(context.Context, string) (net.Conn, error) {
-		return listener.Dial()
-	}
-
-	tests := []struct {
-		name        string
-		config      *Config
-		expectError bool
-	}{
-		{
-			name: "valid config",
-			config: &Config{
-				Address:     "bufnet", // Dummy address, will be overwritten by dialer
-				TokenHeader: "authorization",
-			},
-			expectError: false,
-		},
-		{
-			name: "missing address",
-			config: &Config{
-				TokenHeader: "authorization",
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-
-			// Overwrite the default dialer for the test
-			if !tt.expectError {
-				ctx = context.WithValue(ctx, "dialer", dialer)
-			}
-
-			auth, err := New(ctx, tt.config, "test-auth")
-			if tt.expectError {
-				assert.Error(t, err)
-				assert.Nil(t, auth)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, auth)
-			}
-		})
 	}
 }

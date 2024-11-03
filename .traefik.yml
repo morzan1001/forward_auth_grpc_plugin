@@ -1,0 +1,11 @@
+displayName: GRPC Forward Auth
+type: middleware
+iconPath: .assets/logo.png
+
+import: github.com/morzan1001/forward-auth-grpc-plugin
+
+summary: 'GRPC Forward Authentication middleware that validates requests against an authentication service'
+
+testData:
+  Address: "localhost:50051"
+  TokenHeader: "authorization"

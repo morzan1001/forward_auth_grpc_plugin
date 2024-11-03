@@ -1,0 +1,23 @@
+// proto/auth.proto
+syntax = "proto3";
+
+package auth;
+
+option go_package = "github.com/morzan1001/forward-auth-grpc-plugin/proto";
+
+// AuthService handles authentication requests
+service AuthService {
+    rpc Authenticate(AuthRequest) returns (AuthResponse);
+}
+
+// AuthRequest contains the authentication token
+message AuthRequest {
+    string token = 1;
+}
+
+// AuthResponse contains the authentication result
+message AuthResponse {
+    bool allowed = 1;
+    string message = 2;
+    map<string, string> metadata = 3;
+}

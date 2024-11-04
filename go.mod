@@ -1,4 +1,4 @@
-module github.com/morzan1001/forward-auth-grpc-plugin
+module github.com/morzan1001/forward_auth_grpc_plugin
 
 go 1.21
 

@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	pb "github.com/morzan1001/forward-auth-grpc-plugin/proto"
+	pb "github.com/morzan1001/forward_auth_grpc_plugin/proto"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

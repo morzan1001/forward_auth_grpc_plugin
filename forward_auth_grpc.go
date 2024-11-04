@@ -7,7 +7,7 @@ import (
 	"net"
 	"os"
 
-	pb "github.com/morzan1001/forward-auth-grpc-plugin/proto"
+	pb "github.com/morzan1001/forward_auth_grpc_plugin/proto"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

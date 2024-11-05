@@ -2,7 +2,7 @@ displayName: GRPC Forward Auth
 type: middleware
 iconPath: .assets/logo.png
 
-import: github.com/morzan1001/forward-auth-grpc-plugin
+import: github.com/morzan1001/forward_auth_grpc_plugin
 
 summary: 'GRPC Forward Authentication middleware that validates requests against an authentication service'
 

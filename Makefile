@@ -11,7 +11,8 @@ PROTO_FILES=$(PROTO_DIR)/*.proto
 
 # Install protoc dependencies
 install-proto-deps:
-	go get github.com/golang/protobuf/protoc-gen-go
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 # Generate proto files
 proto: install-proto-deps

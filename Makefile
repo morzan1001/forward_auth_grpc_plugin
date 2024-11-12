@@ -9,10 +9,21 @@ PROTOC=protoc
 PROTO_DIR=proto
 PROTO_FILES=$(PROTO_DIR)/*.proto
 
+# Install depricated protoc-gen-go
+install-proto-deps-deprecated:
+	go install github.com/gogo/protobuf/protoc-gen-gofast@latest
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
 # Install protoc dependencies
 install-proto-deps:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# Generate proto files using the deprecated protoc-gen-go
+proto-deprecated: install-proto-deps-deprecated
+	$(PROTOC) --gofast_out=. --gofast_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		$(PROTO_FILES)
 
 # Generate proto files
 proto: install-proto-deps
@@ -23,7 +34,7 @@ proto: install-proto-deps
 lint:
 	golangci-lint run
 
-test: proto
+test:
 	go test -v -cover -timeout 30s ./...
 
 yaegi_test:

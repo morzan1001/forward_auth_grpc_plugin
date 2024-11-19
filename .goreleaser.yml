@@ -1,7 +1,7 @@
 project_name: grpc_forward_auth
 
 builds:
-  - binary: grpc_forward_auth.wasm
+  - binary: plugin
     no_unique_dist_dir: true
     main: .
     ldflags: -s -w

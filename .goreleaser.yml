@@ -4,12 +4,10 @@ builds:
   - binary: grpc_forward_auth.wasm
     no_unique_dist_dir: true
     main: .
-    flags:
-      - -tags=wasi
     ldflags:
       - '"-s -w"'
     goos:
-      - wasi
+      - wasip1 
     goarch:
       - wasm
 

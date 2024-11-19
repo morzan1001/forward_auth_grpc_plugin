@@ -39,7 +39,7 @@ vendor:
 	go mod vendor
 
 build:
-	@tinygo build -o plugin.wasm -scheduler=none --no-debug -target=wasi ./forward_auth_grpc.go
+	GOOS=wasip1 GOARCH=wasm go build -o forward_auth_grpc_plugin.wasm ./forward_auth_grpc.go
 
 clean:
 	rm -rf ./vendor

@@ -2,7 +2,7 @@
 
 export GO111MODULE=on
 
-default: lint test
+default: test build
 
 # Protoc parameters
 PROTOC=protoc

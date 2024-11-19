@@ -4,8 +4,6 @@ runtime: wasm
 iconPath: .assets/logo.png
 bannerPath: .assets/banner.png
 
-import: github.com/morzan1001/forward_auth_grpc_plugin
-
 summary: 'GRPC Forward Authentication middleware that validates requests against an authentication service'
 
 testData:

@@ -1,55 +1,22 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"net/http"
 	"os"
 	"testing"
 
 	pb "github.com/morzan1001/forward_auth_grpc_plugin/proto"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 )
 
-// MockServerTransportStream implements grpc.ServerTransportStream for tests
-type MockServerTransportStream struct {
-	headersSent metadata.MD
-}
-
-func (m *MockServerTransportStream) Method() string                 { return "" }
-func (m *MockServerTransportStream) SetHeader(md metadata.MD) error { return nil }
-func (m *MockServerTransportStream) SendHeader(md metadata.MD) error {
-	m.headersSent = md
-	return nil
-}
-func (m *MockServerTransportStream) SetTrailer(md metadata.MD) error { return nil }
-
-// MockAuthService is a mock for the external service
-type MockAuthService struct {
-	pb.UnimplementedAuthServiceServer
-	allowAuth bool
-	metadata  map[string]string
-}
-
-// Authenticate is the mock implementation of the Authenticate method
-func (m *MockAuthService) Authenticate(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
-	return &pb.AuthResponse{
-		Allowed:  m.allowAuth,
-		Message:  "mock response",
-		Metadata: m.metadata,
-	}, nil
-}
-
-func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*GRPCForwardAuth, func()) {
-	// Start mock server
+// setupTestWithConfig sets up a gRPC server with the given configuration and mock service.
+func setupTestWithConfig(t *testing.T, mock pb.AuthServiceServer, config *Config) (*GRPCForwardAuth, func()) {
 	lis, err := net.Listen("tcp", config.Address)
 	require.NoError(t, err)
 
@@ -92,69 +59,103 @@ func setupTestWithConfig(t *testing.T, mock *MockAuthService, config *Config) (*
 		}
 	}()
 
-	// Create GRPCForwardAuth instance with configuration
-	auth, err := New(context.Background(), config, "test")
+	auth, err := New(config)
 	require.NoError(t, err)
 
 	cleanup := func() {
 		s.Stop()
+		lis.Close()
 	}
 
 	return auth, cleanup
 }
 
-func TestGRPCForwardAuth_WithMetadata(t *testing.T) {
-	expectedMetadata := map[string]string{
-		"user-id": "123",
-		"role":    "admin",
-	}
-
+// TestGRPCForwardAuth_FailedAuthentication tests failed authentication.
+func TestGRPCForwardAuth_FailedAuthentication(t *testing.T) {
 	mock := &MockAuthService{
-		allowAuth: true,
-		metadata:  expectedMetadata,
+		allowAuth: false,
+		message:   "invalid token",
 	}
 
 	config := &Config{
-		Address:     "localhost:50051",
-		TokenHeader: "authorization",
+		Address:     "localhost:50052",
+		TokenHeader: "Authorization",
 		UseTLS:      false,
 	}
 
 	auth, cleanup := setupTestWithConfig(t, mock, config)
 	defer cleanup()
 
-	// Create stream mock
-	stream := &MockServerTransportStream{}
+	req := NewMockRequest()
+	resp := NewMockResponse()
 
-	// Context with stream and token
-	ctx := grpc.NewContextWithServerTransportStream(
-		metadata.NewIncomingContext(
-			context.Background(),
-			metadata.New(map[string]string{
-				"authorization": "Bearer valid-token",
-			}),
-		),
-		stream,
-	)
+	req.Headers().Set("Authorization", "Bearer invalid-token")
 
-	// Execute request
-	err := auth.InterceptRequest(ctx)
-	require.NoError(t, err)
+	next, _ := auth.handleRequest(req, resp)
 
-	// Check whether metadata has been passed on correctly
-	require.NotNil(t, stream.headersSent)
-	assert.Equal(t, expectedMetadata["user-id"], stream.headersSent.Get("user-id")[0])
-	assert.Equal(t, expectedMetadata["role"], stream.headersSent.Get("role")[0])
+	assert.False(t, next)
+	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode())
 }
 
-func TestGRPCForwardAuth_WithCACert(t *testing.T) {
+// TestGRPCForwardAuth_MissingToken tests the behavior when the token is missing.
+func TestGRPCForwardAuth_MissingToken(t *testing.T) {
 	mock := &MockAuthService{
 		allowAuth: true,
 	}
 
 	config := &Config{
-		Address:     "localhost:50052",
-		TokenHeader: "authorization",
+		Address:     "localhost:50053",
+		TokenHeader: "Authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	req := NewMockRequest()
+	resp := NewMockResponse()
+
+	next, _ := auth.handleRequest(req, resp)
+
+	assert.False(t, next)
+	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode())
+}
+
+// TestGRPCForwardAuth_EmptyToken tests the behavior when the token is empty.
+func TestGRPCForwardAuth_EmptyToken(t *testing.T) {
+	mock := &MockAuthService{
+		allowAuth: true,
+	}
+
+	config := &Config{
+		Address:     "localhost:50054",
+		TokenHeader: "Authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	req := NewMockRequest()
+	resp := NewMockResponse()
+
+	req.Headers().Set("Authorization", "")
+
+	next, _ := auth.handleRequest(req, resp)
+
+	assert.False(t, next)
+	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode())
+}
+
+// TestGRPCForwardAuth_WithTLSAndCACert tests the behavior with TLS and CA certificate.
+func TestGRPCForwardAuth_WithTLSAndCACert(t *testing.T) {
+	mock := &MockAuthService{
+		allowAuth: true,
+	}
+
+	config := &Config{
+		Address:     "localhost:50055",
+		TokenHeader: "Authorization",
 		UseTLS:      true,
 		CACertPath:  "certs/dummy-ca.crt",
 	}
@@ -162,167 +163,157 @@ func TestGRPCForwardAuth_WithCACert(t *testing.T) {
 	auth, cleanup := setupTestWithConfig(t, mock, config)
 	defer cleanup()
 
-	// Create context with token
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
+	req := NewMockRequest()
+	resp := NewMockResponse()
 
-	// Test authentication
-	err := auth.InterceptRequest(ctx)
+	req.Headers().Set("Authorization", "Bearer valid-token")
 
-	// Verify no error
-	assert.NoError(t, err)
+	next, _ := auth.handleRequest(req, resp)
+
+	assert.True(t, next)
+	assert.Equal(t, uint32(200), resp.GetStatusCode())
 }
 
-func TestGRPCForwardAuth_WithServiceCert(t *testing.T) {
-	mock := &MockAuthService{
-		allowAuth: true,
-	}
-
-	config := &Config{
-		Address:     "localhost:50053",
-		TokenHeader: "authorization",
-		UseTLS:      true,
-		CACertPath:  "certs/dummy-server.crt",
-	}
-
-	auth, cleanup := setupTestWithConfig(t, mock, config)
-	defer cleanup()
-
-	// Create context with token
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	// Test authentication
-	err := auth.InterceptRequest(ctx)
-
-	// Verify no error
-	assert.NoError(t, err)
-}
-
-func TestGRPCForwardAuth_InvalidToken(t *testing.T) {
-	mock := &MockAuthService{
-		allowAuth: false, // Set to false to simulate authentication failure
-	}
-
-	config := &Config{
-		Address:     "localhost:50054",
-		TokenHeader: "authorization",
-		UseTLS:      false,
-	}
-
-	auth, cleanup := setupTestWithConfig(t, mock, config)
-	defer cleanup()
-
-	// Create context with invalid token
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer invalid-token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	// Test authentication
-	err := auth.InterceptRequest(ctx)
-
-	// Verify error
-	assert.Error(t, err)
-	st, ok := status.FromError(err)
-	assert.True(t, ok)
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-	assert.Contains(t, st.Message(), "mock response")
-}
-
-func TestGRPCForwardAuth_NoTLS(t *testing.T) {
-	mock := &MockAuthService{
-		allowAuth: true,
-	}
-
-	config := &Config{
-		Address:     "localhost:50055",
-		TokenHeader: "authorization",
-		UseTLS:      false,
-	}
-
-	auth, cleanup := setupTestWithConfig(t, mock, config)
-	defer cleanup()
-
-	// Create context with token
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	// Test authentication
-	err := auth.InterceptRequest(ctx)
-
-	// Verify no error
-	assert.NoError(t, err)
-}
-
-func TestGRPCForwardAuth_MissingToken(t *testing.T) {
+// TestGRPCForwardAuth_WithoutTLS tests the behavior without TLS.
+func TestGRPCForwardAuth_WithoutTLS(t *testing.T) {
 	mock := &MockAuthService{
 		allowAuth: true,
 	}
 
 	config := &Config{
 		Address:     "localhost:50056",
-		TokenHeader: "authorization",
+		TokenHeader: "Authorization",
 		UseTLS:      false,
 	}
 
 	auth, cleanup := setupTestWithConfig(t, mock, config)
 	defer cleanup()
 
-	// Create context without token
-	md := metadata.New(map[string]string{})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
+	req := NewMockRequest()
+	resp := NewMockResponse()
 
-	// Test authentication
-	err := auth.InterceptRequest(ctx)
+	req.Headers().Set("Authorization", "Bearer valid-token")
 
-	// Verify error
-	assert.Error(t, err)
-	st, ok := status.FromError(err)
-	assert.True(t, ok)
-	assert.Equal(t, codes.Unauthenticated, st.Code())
-	assert.Contains(t, st.Message(), "missing authorization header")
+	next, _ := auth.handleRequest(req, resp)
+
+	assert.True(t, next)
+	assert.Equal(t, uint32(200), resp.GetStatusCode())
 }
 
-func TestGRPCForwardAuth_AuthServiceDown(t *testing.T) {
-
+// TestGRPCForwardAuth_EmptyAddress tests the behavior with an empty address.
+func TestGRPCForwardAuth_EmptyAddress(t *testing.T) {
 	config := &Config{
-		Address:     "invalid-address:50057",
-		TokenHeader: "authorization",
+		Address:     "",
+		TokenHeader: "Authorization",
 		UseTLS:      false,
 	}
 
-	// Create context with token
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
+	_, err := New(config)
+	assert.Error(t, err)
+}
 
-	auth, err := New(ctx, config, "test")
-	if err == nil {
-		// If no errors when creating, try a request
-		reqCtx := metadata.NewIncomingContext(
-			context.Background(),
-			metadata.New(map[string]string{
-				"authorization": "Bearer test-token",
-			}),
-		)
-
-		err = auth.InterceptRequest(reqCtx)
-		require.Error(t, err)
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		require.Equal(t, codes.Unavailable, st.Code())
-	} else {
-		// Or check the connection error
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		require.Equal(t, codes.Unavailable, st.Code())
+// TestGRPCForwardAuth_InvalidCACertPath tests the behavior with an invalid CA certificate path.
+func TestGRPCForwardAuth_InvalidCACertPath(t *testing.T) {
+	config := &Config{
+		Address:     "localhost:50057",
+		TokenHeader: "Authorization",
+		UseTLS:      true,
+		CACertPath:  "nonexistent.crt",
 	}
+
+	_, err := New(config)
+	assert.Error(t, err)
+}
+
+// TestGRPCForwardAuth_CustomTokenHeader tests the behavior with a custom token header.
+func TestGRPCForwardAuth_CustomTokenHeader(t *testing.T) {
+	mock := &MockAuthService{
+		allowAuth: true,
+	}
+
+	config := &Config{
+		Address:     "localhost:50058",
+		TokenHeader: "X-Custom-Token",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	req := NewMockRequest()
+	resp := NewMockResponse()
+
+	req.Headers().Set("X-Custom-Token", "Bearer valid-token")
+
+	next, _ := auth.handleRequest(req, resp)
+
+	assert.True(t, next)
+	assert.Equal(t, uint32(200), resp.GetStatusCode())
+}
+
+// TestGRPCForwardAuth_MetadataHandling tests the handling of complex metadata.
+func TestGRPCForwardAuth_MetadataHandling(t *testing.T) {
+	complexMetadata := map[string]string{
+		"user-id":     "123",
+		"role":        "admin",
+		"permissions": "read,write",
+		"tenant":      "org1",
+	}
+
+	mock := &MockAuthService{
+		allowAuth: true,
+		metadata:  complexMetadata,
+	}
+
+	config := &Config{
+		Address:     "localhost:50059",
+		TokenHeader: "Authorization",
+		UseTLS:      false,
+	}
+
+	auth, cleanup := setupTestWithConfig(t, mock, config)
+	defer cleanup()
+
+	req := NewMockRequest()
+	resp := NewMockResponse()
+
+	req.Headers().Set("Authorization", "Bearer valid-token")
+
+	next, _ := auth.handleRequest(req, resp)
+
+	assert.True(t, next)
+	for key, value := range complexMetadata {
+		headerValue, ok := req.Headers().Get(key)
+		assert.True(t, ok)
+		assert.Equal(t, value, headerValue)
+	}
+}
+
+// TestGRPCForwardAuth_ServiceUnavailable tests the behavior when the auth service is unavailable.
+func TestGRPCForwardAuth_ServiceUnavailable(t *testing.T) {
+	config := &Config{
+		Address:     "invalid:50060",
+		TokenHeader: "Authorization",
+		UseTLS:      false,
+	}
+
+	// Directly initialize the service without setting up a gRPC server
+	auth, err := New(config)
+	require.NoError(t, err)
+
+	req := NewMockRequest()
+	resp := NewMockResponse()
+
+	req.Headers().Set("Authorization", "Bearer valid-token")
+
+	next, _ := auth.handleRequest(req, resp)
+
+	assert.False(t, next, "Request should not be forwarded when auth service is unavailable")
+	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode(),
+		"Should return 401 Unauthorized when auth service is not reachable")
+
+	// Test which error message is returned.
+	// In order not to leak any internal information, a standard code with a standard message is expected.
+	body := resp.Body().(*MockBody)
+	assert.Contains(t, string(body.data), "authentication failed")
 }

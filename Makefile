@@ -12,7 +12,6 @@ PROTO_FILES=$(PROTO_DIR)/*.proto
 # Install depricated protoc-gen-go
 install-proto-deps-deprecated:
 	go install github.com/gogo/protobuf/protoc-gen-gofast@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 # Install protoc dependencies
 install-proto-deps:
@@ -21,8 +20,7 @@ install-proto-deps:
 
 # Generate proto files using the deprecated protoc-gen-go
 proto-deprecated: install-proto-deps-deprecated
-	$(PROTOC) --gofast_out=. --gofast_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+	$(PROTOC) --gofast_out=plugins=grpc:. --gofast_opt=paths=source_relative \
 		$(PROTO_FILES)
 
 # Generate proto files
@@ -37,11 +35,11 @@ lint:
 test:
 	go test -v -cover -timeout 30s ./...
 
-yaegi_test:
-	yaegi test -v .
-
 vendor:
 	go mod vendor
+
+build:
+	@tinygo build -o plugin.wasm -scheduler=none --no-debug -target=wasi ./forward_auth_grpc.go
 
 clean:
 	rm -rf ./vendor

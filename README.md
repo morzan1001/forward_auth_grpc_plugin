@@ -16,7 +16,7 @@ To install the plugin, add the following configuration to your Traefik configura
 experimental:
   plugins:
     grpcForwardAuth:
-      moduleName: "github.com/morzan1001/forward-auth-grpc-plugin"
+      moduleName: "github.com/morzan1001/forward_auth_grpc_plugin"
       version: "v1.0.1"
 ```
 

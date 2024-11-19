@@ -4,37 +4,44 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"net"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"os"
 
+	"github.com/http-wasm/http-wasm-guest-tinygo/handler"
+	"github.com/http-wasm/http-wasm-guest-tinygo/handler/api"
 	pb "github.com/morzan1001/forward_auth_grpc_plugin/proto"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
 // Config holds the configuration for the GRPCForwardAuth plugin.
 type Config struct {
-	Address     string
-	TokenHeader string
-	UseTLS      bool
-	CACertPath  string
+	Address     string `json:"address,omitempty"`
+	TokenHeader string `json:"tokenHeader,omitempty"`
+	UseTLS      bool   `json:"useTLS,omitempty"`
+	CACertPath  string `json:"caCertPath,omitempty"`
+}
+
+// CreateConfig creates the default plugin configuration.
+func CreateConfig() *Config {
+	return &Config{}
 }
 
 // GRPCForwardAuth plugin.
 type GRPCForwardAuth struct {
 	address     string
 	tokenHeader string
-	name        string
 	client      pb.AuthServiceClient
 }
 
 // New creates a new GRPCForwardAuth plugin.
-func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, error) {
+func New(config *Config) (*GRPCForwardAuth, error) {
 	if config.Address == "" {
 		return nil, status.Error(codes.InvalidArgument, "auth service address cannot be empty")
 	}
@@ -76,16 +83,7 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
-	// If a test dialer is present, use it
-	if dialer, ok := ctx.Value("dialer").(func(context.Context, string) (net.Conn, error)); ok {
-		opts = append(opts, grpc.WithContextDialer(dialer))
-	}
-
-	conn, err := grpc.NewClient(
-		config.Address,
-		opts...,
-	)
-
+	conn, err := grpc.NewClient(config.Address, opts...)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "failed to connect to auth service: %v", err)
 	}
@@ -95,29 +93,18 @@ func New(ctx context.Context, config *Config, name string) (*GRPCForwardAuth, er
 	return &GRPCForwardAuth{
 		address:     config.Address,
 		tokenHeader: config.TokenHeader,
-		name:        name,
 		client:      client,
 	}, nil
 }
 
-// InterceptRequest handles the incoming gRPC request authentication
-func (g *GRPCForwardAuth) InterceptRequest(ctx context.Context) error {
-	if g.client == nil {
-		return status.Error(codes.Unavailable, "auth client not initialized")
+func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (next bool, reqCtx uint32) {
+	// Get token from header
+	token, ok := req.Headers().Get(g.tokenHeader)
+	if !ok || token == "" {
+		resp.SetStatusCode(http.StatusUnauthorized)
+		resp.Body().Write([]byte("missing token"))
+		return false, 0
 	}
-
-	// Get metadata from incoming request
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return status.Error(codes.Unauthenticated, "missing metadata")
-	}
-
-	// Get token from metadata
-	tokens := md.Get(g.tokenHeader)
-	if len(tokens) == 0 {
-		return status.Errorf(codes.Unauthenticated, "missing %s header", g.tokenHeader)
-	}
-	token := tokens[0]
 
 	// Create auth request
 	authReq := &pb.AuthRequest{
@@ -125,21 +112,39 @@ func (g *GRPCForwardAuth) InterceptRequest(ctx context.Context) error {
 	}
 
 	// Call auth service
-	resp, err := g.client.Authenticate(ctx, authReq)
-	if err != nil {
-		return err
-	}
-
-	if !resp.Allowed {
-		return status.Error(codes.PermissionDenied, resp.Message)
-	}
-
-	// If authentication successful and we have metadata
-	if resp.Metadata != nil {
-		if stream := grpc.ServerTransportStreamFromContext(ctx); stream != nil {
-			return stream.SendHeader(metadata.New(resp.Metadata))
+	ctx := context.Background()
+	authResp, err := g.client.Authenticate(ctx, authReq)
+	if err != nil || authResp == nil || !authResp.Allowed {
+		resp.SetStatusCode(http.StatusUnauthorized)
+		if authResp != nil && authResp.Message != "" {
+			resp.Body().Write([]byte(authResp.Message))
+		} else {
+			resp.Body().Write([]byte("authentication failed"))
 		}
+		return false, 0
 	}
 
-	return nil
+	// Add headers from auth response to the original request
+	for key, value := range authResp.Metadata {
+		req.Headers().Set(key, value)
+	}
+
+	return true, 0
+}
+
+// main is the entry point for the Wasm module.
+func main() {
+	var config Config
+	err := json.Unmarshal(handler.Host.GetConfig(), &config)
+	if err != nil {
+		handler.Host.Log(api.LogLevelError, fmt.Sprintf("Could not load config %v", err))
+		os.Exit(1)
+	}
+
+	mw, err := New(&config)
+	if err != nil {
+		handler.Host.Log(api.LogLevelError, fmt.Sprintf("Could not load config %v", err))
+		os.Exit(1)
+	}
+	handler.HandleRequestFn = mw.handleRequest
 }

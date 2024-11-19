@@ -1,5 +1,6 @@
 displayName: GRPC Forward Auth
 type: middleware
+runtime: wasm
 iconPath: .assets/logo.png
 
 import: github.com/morzan1001/forward_auth_grpc_plugin

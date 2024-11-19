@@ -4,8 +4,7 @@ builds:
   - binary: grpc_forward_auth.wasm
     no_unique_dist_dir: true
     main: .
-    ldflags:
-      - '"-s -w"'
+    ldflags: -s -w
     goos:
       - wasip1 
     goarch:

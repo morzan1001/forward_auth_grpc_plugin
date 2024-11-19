@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/http-wasm/http-wasm-guest-tinygo/handler"
@@ -101,7 +100,7 @@ func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (nex
 	// Get token from header
 	token, ok := req.Headers().Get(g.tokenHeader)
 	if !ok || token == "" {
-		resp.SetStatusCode(http.StatusUnauthorized)
+		resp.SetStatusCode(401)
 		resp.Body().Write([]byte("missing token"))
 		return false, 0
 	}
@@ -115,7 +114,7 @@ func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (nex
 	ctx := context.Background()
 	authResp, err := g.client.Authenticate(ctx, authReq)
 	if err != nil || authResp == nil || !authResp.Allowed {
-		resp.SetStatusCode(http.StatusUnauthorized)
+		resp.SetStatusCode(401)
 		if authResp != nil && authResp.Message != "" {
 			resp.Body().Write([]byte(authResp.Message))
 		} else {

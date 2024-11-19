@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
-	"net/http"
 	"os"
 	"testing"
 
@@ -94,7 +93,7 @@ func TestGRPCForwardAuth_FailedAuthentication(t *testing.T) {
 	next, _ := auth.handleRequest(req, resp)
 
 	assert.False(t, next)
-	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode())
+	assert.Equal(t, uint32(401), resp.GetStatusCode())
 }
 
 // TestGRPCForwardAuth_MissingToken tests the behavior when the token is missing.
@@ -118,7 +117,7 @@ func TestGRPCForwardAuth_MissingToken(t *testing.T) {
 	next, _ := auth.handleRequest(req, resp)
 
 	assert.False(t, next)
-	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode())
+	assert.Equal(t, uint32(401), resp.GetStatusCode())
 }
 
 // TestGRPCForwardAuth_EmptyToken tests the behavior when the token is empty.
@@ -144,7 +143,7 @@ func TestGRPCForwardAuth_EmptyToken(t *testing.T) {
 	next, _ := auth.handleRequest(req, resp)
 
 	assert.False(t, next)
-	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode())
+	assert.Equal(t, uint32(401), resp.GetStatusCode())
 }
 
 // TestGRPCForwardAuth_WithTLSAndCACert tests the behavior with TLS and CA certificate.
@@ -309,7 +308,7 @@ func TestGRPCForwardAuth_ServiceUnavailable(t *testing.T) {
 	next, _ := auth.handleRequest(req, resp)
 
 	assert.False(t, next, "Request should not be forwarded when auth service is unavailable")
-	assert.Equal(t, uint32(http.StatusUnauthorized), resp.GetStatusCode(),
+	assert.Equal(t, uint32(401), resp.GetStatusCode(),
 		"Should return 401 Unauthorized when auth service is not reachable")
 
 	// Test which error message is returned.

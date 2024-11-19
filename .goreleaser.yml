@@ -1,20 +1,17 @@
 project_name: grpc_forward_auth
 
 builds:
-  - binary: plugin.wasm
-    gobinary: tinygo
+  - binary: grpc_forward_auth.wasm
     no_unique_dist_dir: true
     main: .
     flags:
-      - -scheduler=none
-      - --no-debug
-      - -target=wasi
+      - -tags=wasi
     ldflags:
-      - ''
+      - '"-s -w"'
     goos:
-      - linux
+      - wasi
     goarch:
-      - amd64
+      - wasm
 
 changelog:
   sort: asc
@@ -28,7 +25,7 @@ changelog:
       - '^tests:'
 
 archives:
-  - id: plugindemowasm
+  - id: grpc_forward_auth
     name_template: '{{ .ProjectName }}_v{{ .Version }}'
     format: zip
     files:

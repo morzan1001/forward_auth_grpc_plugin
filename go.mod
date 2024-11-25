@@ -4,7 +4,7 @@ go 1.23
 
 require (
 	github.com/http-wasm/http-wasm-guest-tinygo v0.4.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	google.golang.org/grpc v1.68.0
 	google.golang.org/protobuf v1.35.2
 )

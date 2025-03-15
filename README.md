@@ -20,7 +20,7 @@ experimental:
       version: "v1.0.1"
 ```
 
-### Yaegi vs. Wasm 
+### Yaegi vs. Wasm
 
 Actually I had planned to write a native traefik plugin. Unfortunately [yaegi](https://github.com/traefik/yaegi) (go interpreter of traefik) has the restriction that the package [unsafe](https://pkg.go.dev/unsafe) may not be used. A debatable design decision, but nothing I can influence. Unfortunately, the package protobuf has this dependency and I have not found a way not to use [protobuf](https://pkg.go.dev/google.golang.org/protobuf). So I switched to a wasm plugin. The disadvantage is the conversion of data to json and back so that traefik can talk to the plugin via http. I find this step superfluous but there is currently no other way to delete it. If I have overlooked something, I would be happy to receive an issue.
 

@@ -32,7 +32,7 @@ func CreateConfig() *Config {
 	return &Config{}
 }
 
-// GRPCForwardAuth plugin.
+// GRPCForwardAuth defines the authentication plugin.
 type GRPCForwardAuth struct {
 	address     string
 	tokenHeader string
@@ -45,25 +45,21 @@ func New(config *Config) (*GRPCForwardAuth, error) {
 		return nil, status.Error(codes.InvalidArgument, "auth service address cannot be empty")
 	}
 
-	// Setup connection options
+	// Setup connection options.
 	var opts []grpc.DialOption
 
 	if config.UseTLS {
 		var caCertPool *x509.CertPool
 		if config.CACertPath != "" {
-			// Load the CA certificates
 			caCert, err := os.ReadFile(config.CACertPath)
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to read CA certificate: %v", err)
 			}
-
-			// Create a CertPool and add the CA certificates
 			caCertPool = x509.NewCertPool()
 			if !caCertPool.AppendCertsFromPEM(caCert) {
 				return nil, status.Errorf(codes.Internal, "failed to append CA certificate")
 			}
 		} else {
-			// Use the system CA certificates
 			var err error
 			caCertPool, err = x509.SystemCertPool()
 			if err != nil {
@@ -71,11 +67,9 @@ func New(config *Config) (*GRPCForwardAuth, error) {
 			}
 		}
 
-		// Create the TLS credentials
 		tlsConfig := &tls.Config{
 			RootCAs: caCertPool,
 		}
-
 		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
@@ -96,8 +90,8 @@ func New(config *Config) (*GRPCForwardAuth, error) {
 	}, nil
 }
 
+// handleRequest processes the incoming request and performs authentication via gRPC.
 func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (next bool, reqCtx uint32) {
-	// Get token from header
 	token, ok := req.Headers().Get(g.tokenHeader)
 	if !ok || token == "" {
 		resp.SetStatusCode(401)
@@ -105,12 +99,8 @@ func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (nex
 		return false, 0
 	}
 
-	// Create auth request
-	authReq := &pb.AuthRequest{
-		Token: token,
-	}
+	authReq := &pb.AuthRequest{Token: token}
 
-	// Call auth service
 	ctx := context.Background()
 	authResp, err := g.client.Authenticate(ctx, authReq)
 	if err != nil || authResp == nil || !authResp.Allowed {
@@ -123,7 +113,6 @@ func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (nex
 		return false, 0
 	}
 
-	// Add headers from auth response to the original request
 	for key, value := range authResp.Metadata {
 		req.Headers().Set(key, value)
 	}
@@ -131,19 +120,21 @@ func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (nex
 	return true, 0
 }
 
-// main is the entry point for the Wasm module.
-func main() {
+// init initializes the plugin.
+func init() {
 	var config Config
 	err := json.Unmarshal(handler.Host.GetConfig(), &config)
 	if err != nil {
-		handler.Host.Log(api.LogLevelError, fmt.Sprintf("Could not load config %v", err))
-		os.Exit(1)
+		handler.Host.Log(api.LogLevelError, fmt.Sprintf("Could not load config: %v", err))
+		return
 	}
 
-	mw, err := New(&config)
+	plugin, err := New(&config)
 	if err != nil {
-		handler.Host.Log(api.LogLevelError, fmt.Sprintf("Could not load config %v", err))
-		os.Exit(1)
+		handler.Host.Log(api.LogLevelError, fmt.Sprintf("Could not initialize plugin: %v", err))
+		return
 	}
-	handler.HandleRequestFn = mw.handleRequest
+	handler.HandleRequestFn = plugin.handleRequest
 }
+
+func main() {}

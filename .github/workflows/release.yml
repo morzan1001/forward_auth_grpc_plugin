@@ -9,6 +9,9 @@ jobs:
   main:
     name: Release process
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      releases: write
     env:
       GO_VERSION: 1.21
 

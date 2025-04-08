@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	github.com/http-wasm/http-wasm-guest-tinygo v0.4.0
 	github.com/stretchr/testify v1.10.0
-	google.golang.org/grpc v1.71.0
+	google.golang.org/grpc v1.71.1
 	google.golang.org/protobuf v1.36.5
 )
 

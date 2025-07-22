@@ -138,7 +138,7 @@ func init() {
 	}
 }
 
-// export handle_request
+//export handle_request
 func handle_request(req api.Request, resp api.Response) (next bool, reqCtx uint32) {
 	if plugin == nil {
 		resp.SetStatusCode(500)

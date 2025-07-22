@@ -120,6 +120,8 @@ func (g *GRPCForwardAuth) handleRequest(req api.Request, resp api.Response) (nex
 	return true, 0
 }
 
+var plugin *GRPCForwardAuth
+
 // init initializes the plugin.
 func init() {
 	var config Config
@@ -129,12 +131,21 @@ func init() {
 		return
 	}
 
-	plugin, err := New(&config)
+	plugin, err = New(&config)
 	if err != nil {
 		handler.Host.Log(api.LogLevelError, fmt.Sprintf("Could not initialize plugin: %v", err))
 		return
 	}
-	handler.HandleRequestFn = plugin.handleRequest
+}
+
+// export handle_request
+func handle_request(req api.Request, resp api.Response) (next bool, reqCtx uint32) {
+	if plugin == nil {
+		resp.SetStatusCode(500)
+		resp.Body().Write([]byte("plugin not initialized"))
+		return false, 0
+	}
+	return plugin.handleRequest(req, resp)
 }
 
 func main() {}
